@@ -1,82 +1,91 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Mapa con búsqueda de coordenadas</title>
+  <meta charset="UTF-8">
+  <title>Mapa con filtro de coordenadas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
-    #map { height: 500px; margin-bottom: 10px; }
-    table, th, td { border: 1px solid black; border-collapse: collapse; padding: 5px; }
-    th, td { text-align: left; }
+    #map { height: 90vh; width: 100%; }
+    body { font-family: sans-serif; margin: 0; }
+    #controls { padding: 10px; background: #f0f0f0; }
+    input { margin: 5px; padding: 5px; }
+    button { padding: 5px 10px; }
   </style>
 </head>
 <body>
-  <h2>Mapa de propiedades</h2>
-  <input type="text" id="coordInput" placeholder="-12.1336, -77.0126" style="width: 300px;">
-  <button onclick="buscarCoordenada()">Buscar</button>
-  
+  <div id="controls">
+    <label>Coordenada base (lat, lng): <input id="baseCoord" placeholder="-12.133, -77.01"></label>
+    <label>Radio (km): <input type="number" id="radioKm" value="1" min="0.1" step="0.1"></label>
+    <button onclick="filtrarPuntos()">Filtrar</button>
+    <button onclick="mostrarTodos()">Mostrar todos</button>
+  </div>
   <div id="map"></div>
 
-  <h3>Tabla de propiedades</h3>
-  <div id="tabla-container"></div>
-
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
   <script>
-    const map = L.map('map').setView([-12.133, -77.02], 15);
-
+    const mapa = L.map('map').setView([-12.05, -77.05], 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-    }).addTo(map);
+      attribution: 'Map data © OpenStreetMap contributors'
+    }).addTo(mapa);
 
-    let markers = [];
-    let datos = [];
+    let todosLosMarcadores = [];
 
     function cargarCSV() {
-      fetch('datos.csv')
+      fetch('referencias.csv')
         .then(response => response.text())
-        .then(data => {
-          const lineas = data.trim().split('\n');
-          const headers = lineas[0].split('\t');
-          for (let i = 1; i < lineas.length; i++) {
-            const fila = lineas[i].split('\t');
-            if (fila.length < 3) continue;
-
-            const id = fila[0];
-            const link = fila[1];
-            const coords = fila[2].split(',').map(c => parseFloat(c.trim()));
-            if (coords.length !== 2) continue;
-
-            const obj = { id, link, lat: coords[0], lng: coords[1] };
-            datos.push(obj);
-
-            const marker = L.marker([obj.lat, obj.lng])
-              .addTo(map)
-              .bindPopup(`<a href="${obj.link}" target="_blank">${obj.id}</a>`);
-            markers.push(marker);
-          }
-          crearTabla(datos);
+        .then(csv => {
+          const data = Papa.parse(csv, { header: true }).data;
+          data.forEach(fila => {
+            const coordStr = fila.coordenadas || fila.Coordenadas;
+            if (coordStr && coordStr.includes(',')) {
+              const [lat, lng] = coordStr.split(',').map(s => parseFloat(s.trim()));
+              if (!isNaN(lat) && !isNaN(lng)) {
+                const marcador = L.marker([lat, lng]).bindPopup(`Lat: ${lat}<br>Lng: ${lng}`);
+                todosLosMarcadores.push({ marcador, lat, lng });
+                marcador.addTo(mapa);
+              }
+            }
+          });
         });
     }
 
-    function buscarCoordenada() {
-      const input = document.getElementById('coordInput').value;
-      const coords = input.split(',').map(c => parseFloat(c.trim()));
-      if (coords.length !== 2 || isNaN(coords[0]) || isNaN(coords[1])) {
-        alert("Formato inválido. Usa: latitud, longitud");
-        return;
-      }
-      map.setView(coords, 18);
-      L.circleMarker(coords, { radius: 10, color: 'red' }).addTo(map).bindPopup("Coordenada buscada").openPopup();
+    function distanciaKm(lat1, lng1, lat2, lng2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLng / 2) ** 2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
     }
 
-    function crearTabla(datos) {
-      let html = '<table><tr><th>ID</th><th>Link</th><th>Coordenadas</th></tr>';
-      datos.forEach(d => {
-        html += `<tr><td>${d.id}</td><td><a href="${d.link}" target="_blank">Ver</a></td><td>${d.lat}, ${d.lng}</td></tr>`;
+    function filtrarPuntos() {
+      const baseCoord = document.getElementById("baseCoord").value;
+      const radio = parseFloat(document.getElementById("radioKm").value);
+      if (!baseCoord.includes(',')) {
+        alert("Introduce la coordenada en formato: lat, lng");
+        return;
+      }
+      const [latBase, lngBase] = baseCoord.split(',').map(s => parseFloat(s.trim()));
+      if (isNaN(latBase) || isNaN(lngBase)) {
+        alert("Coordenadas inválidas.");
+        return;
+      }
+      todosLosMarcadores.forEach(({ marcador, lat, lng }) => {
+        const d = distanciaKm(latBase, lngBase, lat, lng);
+        if (d <= radio) {
+          marcador.addTo(mapa);
+        } else {
+          mapa.removeLayer(marcador);
+        }
       });
-      html += '</table>';
-      document.getElementById('tabla-container').innerHTML = html;
+    }
+
+    function mostrarTodos() {
+      todosLosMarcadores.forEach(({ marcador }) => marcador.addTo(mapa));
     }
 
     cargarCSV();
