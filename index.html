@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Mapa desde Excel local (CSV)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    input, select, button { margin: 5px; }
+    #map { height: 500px; margin-top: 20px; }
+    table { margin-top: 20px; border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #aaa; padding: 8px; text-align: left; }
+  </style>
+</head>
+<body>
+
+<h3>Cargar archivo CSV local</h3>
+<input type="file" id="csvFile" accept=".csv">
+<br>
+Coordenadas (lat, lng): <input type="text" id="inputCoord" placeholder="-12.133..., -77.012..." size="40">
+Radio (km): 
+<select id="inputRadius">
+  <option value="1">1 km</option>
+  <option value="3">3 km</option>
+  <option value="5">5 km</option>
+  <option value="10">10 km</option>
+</select>
+<button onclick="procesar()">Buscar</button>
+
+<div id="map"></div>
+
+<h3>Resultados</h3>
+<table id="resultTable">
+  <thead>
+    <tr><th>ID</th><th>Link</th><th>Coordenadas</th><th>Distancia (km)</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+const mapa = L.map('map').setView([-12.0464, -77.0428], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapa);
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function procesar() {
+  const file = document.getElementById('csvFile').files[0];
+  const coordInput = document.getElementById('inputCoord').value.trim();
+  const radius = parseFloat(document.getElementById('inputRadius').value);
+
+  if (!file || !coordInput.includes(',')) {
+    alert("Selecciona un archivo y coordenadas válidas");
+    return;
+  }
+
+  const [latBase, lngBase] = coordInput.split(',').map(v => parseFloat(v.trim()));
+  if (isNaN(latBase) || isNaN(lngBase)) {
+    alert("Coordenadas no válidas");
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result.trim();
+    const rows = text.split('\n').slice(1); // Quita la cabecera
+    const tbody = document.querySelector('#resultTable tbody');
+    tbody.innerHTML = '';
+
+    mapa.eachLayer(layer => {
+      if (layer instanceof L.Marker || layer instanceof L.Circle) mapa.removeLayer(layer);
+    });
+
+    let count = 0;
+    rows.forEach(row => {
+      // Separar por comas solo las dos primeras columnas, luego tomar el resto como coordenadas
+      const parts = row.split(',');
+      if (parts.length < 4) return;
+
+      const id = parts[0].trim();
+      const link = parts[1].trim();
+      const coordStr = parts.slice(2).join(',').trim(); // Junta lat y lng
+
+      const [latStr, lngStr] = coordStr.split(',').map(s => s.trim());
+      const lat = parseFloat(latStr);
+      const lng = parseFloat(lngStr);
+      if (isNaN(lat) || isNaN(lng)) return;
+
+      const dist = haversine(latBase, lngBase, lat, lng);
+      if (dist <= radius) {
+        count++;
+        L.marker([lat, lng]).addTo(mapa)
+          .bindPopup(`<strong>ID:</strong> ${id}<br><a href="${link}" target="_blank">Ver link</a><br><strong>Distancia:</strong> ${dist.toFixed(2)} km`);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${id}</td><td><a href="${link}" target="_blank">Abrir</a></td><td>${coordStr}</td><td>${dist.toFixed(2)}</td>`;
+        tbody.appendChild(tr);
+      }
+    });
+
+    mapa.setView([latBase, lngBase], 14);
+    L.circle([latBase, lngBase], {
+      radius: radius * 1000,
+      color: 'blue',
+      fillOpacity: 0.1
+    }).addTo(mapa);
+    L.marker([latBase, lngBase]).addTo(mapa).bindPopup("Tu punto base").openPopup();
+
+    if (count === 0) alert("No se encontraron puntos");
+  };
+
+  reader.readAsText(file);
+}
+</script>
+</body>
+</html>
